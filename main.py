@@ -26,8 +26,8 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 STORE_API_BASE_URL = os.getenv("Store_API_URL")
 
-if not MONGODB_URI:
-    raise RuntimeError("Missing MONGODB_URI in .env. Please set it before starting the app.")
+#if not MONGODB_URI:
+ #   raise RuntimeError("Missing MONGODB_URI in .env. Please set it before starting the app.")
 
 # ---------------- DB SETUP ----------------
 try:
@@ -1184,3 +1184,4 @@ def get_all_sales(current_user=Depends(get_current_user)):
         "count": len(sales_list),
         "data": sales_list
     }
+
