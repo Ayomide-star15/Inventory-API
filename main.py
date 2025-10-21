@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 
 # Import Models (Ensure Model_1.py is in same directory)
-from Model_1 import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
+from model import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
                      ForgotPassword, ResetPassword, OTPOnly, AddSupplier,PurchaseItem, BulkCategory,
                      BulkProductItem, UpdateProduct, Product,SellProduct)
 
