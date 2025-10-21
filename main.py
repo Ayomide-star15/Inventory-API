@@ -16,7 +16,7 @@ from model import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
                      BulkProductItem, UpdateProduct, Product,SellProduct)
 
 # ---------------- ENV SETUP ----------------
-load_dotenv()
+load_dotenv('.env')
 
 MONGODB_URI = os.getenv("MONGODB_URI")
 JWT_SECRET = os.getenv("JWT_SECRET", "mysecretkey")
@@ -1184,5 +1184,6 @@ def get_all_sales(current_user=Depends(get_current_user)):
         "count": len(sales_list),
         "data": sales_list
     }
+
 
 
