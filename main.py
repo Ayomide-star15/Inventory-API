@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import uuid,os,smtplib,random,string
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 
 # load_dotenv('.env')
 
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 from model import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
                      ForgotPassword, ResetPassword, OTPOnly, AddSupplier,PurchaseItem, BulkCategory,
                      BulkProductItem, UpdateProduct, Product,SellProduct)
+
 
 # ---------------- ENV SETUP ---------add-------
 
@@ -53,6 +55,18 @@ security = HTTPBearer()
 
 # ---------------- APP INIT ----------------
 app = FastAPI(title="Inventory System API")
+
+# ---------------- MIDDLEWARE ----------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://inventory-frontend.onrender.com",  # your frontend URL
+        "http://localhost:3000"  # for local testing
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------------- HELPER FUNCTIONS ----------------
 def send_otp_email(email: str, otp: str):
