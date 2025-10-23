@@ -9,14 +9,15 @@ import uuid,os,smtplib,random,string
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 
+# load_dotenv('.env')
+
 
 # Import Models (Ensure Model_1.py is in same directory)
 from model import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
                      ForgotPassword, ResetPassword, OTPOnly, AddSupplier,PurchaseItem, BulkCategory,
                      BulkProductItem, UpdateProduct, Product,SellProduct)
 
-# ---------------- ENV SETUP ----------------
-load_dotenv('.env')
+# ---------------- ENV SETUP ---------add-------
 
 MONGODB_URI = os.getenv("MongoDB_URI")
 JWT_SECRET = os.getenv("JWT_SECRET", "mysecretkey")
@@ -1184,7 +1185,3 @@ def get_all_sales(current_user=Depends(get_current_user)):
         "count": len(sales_list),
         "data": sales_list
     }
-
-
-
-
