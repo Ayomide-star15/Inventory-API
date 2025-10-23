@@ -60,7 +60,7 @@ app = FastAPI(title="Inventory System API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://store-master-chi.vercel.app",  # your frontend URL
+        "*",  # your frontend URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1214,3 +1214,4 @@ def get_all_sales(current_user=Depends(get_current_user)):
         "count": len(sales_list),
         "data": sales_list
     }
+
