@@ -10,7 +10,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
-# load_dotenv('.env')
+load_dotenv('.env')
 
 
 # Import Models (Ensure Model_1.py is in same directory)
