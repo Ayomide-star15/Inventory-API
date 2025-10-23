@@ -60,8 +60,7 @@ app = FastAPI(title="Inventory System API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://inventory-frontend.onrender.com",  # your frontend URL
-        "http://localhost:3000"  # for local testing
+        "https://store-master-chi.vercel.app",  # your frontend URL
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -938,9 +937,13 @@ def view_pending_purchases(current_user=Depends(get_current_user)):
     return {"message": "Pending purchases retrieved", "data": purchases}
 
 
-# ------------------ 3️⃣ STORE MANAGER APPROVES PURCHASE ------------------
+# ------------------ 3️⃣ STORE MANAGER APPROVES PURCHASE ---------------
 @app.put("/purchases/{purchase_id}/approve", tags=["Purchases"])
 def approve_purchase(purchase_id: str, current_user=Depends(get_current_user)):
+    """
+    Approves a pending purchase, updates stock quantity, and sends an email notification.
+    Roles allowed: admin, store_manager.
+    """
     if current_user["role"] not in ["admin", "store_manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to approve purchases")
 
@@ -954,52 +957,64 @@ def approve_purchase(purchase_id: str, current_user=Depends(get_current_user)):
     # Check product existence before approval
     product = products_collection.find_one({"product_id": purchase["product_id"]})
     if not product:
-        # Deny approval if product does not exist, or delete/update the purchase record
+        # Mark purchase as error/invalid if product does not exist
         purchases_collection.update_one({"_id": purchase["_id"]}, {"$set": {"status": "error", "error_reason": "Product not found"}})
         raise HTTPException(status_code=404, detail=f"Product with ID {purchase['product_id']} not found. Cannot approve.")
+    
+    current_time = datetime.utcnow()
 
-    # Update status
+    # 1. Update purchase status
     purchases_collection.update_one(
         {"purchase_id": purchase_id},
-        {"$set": {"status": "approved", "approved_by": current_user["email"], "updated_at": datetime.utcnow()}}
+        {"$set": {"status": "approved", "approved_by": current_user["email"], "updated_at": current_time}}
     )
 
-    # Update product quantity: Use $inc for atomic operation
-    products_collection.update_one({"product_id": purchase["product_id"]}, {"$inc": {"quantity": purchase["quantity"]}})
+    # 2. Update product quantity and timestamp: Use $inc for atomic quantity increase and $set for updated_at
+    products_collection.update_one(
+        {"product_id": purchase["product_id"]}, 
+        {"$inc": {"quantity": purchase["quantity"]}, "$set": {"updated_at": current_time}}
+    )
 
-    # --- SEND EMAIL ALERT TO ADMIN OR SUPPLIER ---
-    subject = f"✅ Purchase Approved: {purchase_id}"
-    body = f"""
+    # 3. Send Email Alert with Fallback 📧
+    # Fallback to ADMIN_EMAIL if the creator's email is missing or invalid.
+    recipient_email = purchase.get("created_by") or os.getenv("ADMIN_EMAIL")
+    
+    if not recipient_email:
+        print("CRITICAL: Failed to determine a recipient email for purchase approval. ADMIN_EMAIL is also missing.")
+        # Proceed with API response even if email fails
+    else:
+        subject = f"✅ Purchase Approved: {purchase_id}"
+        body = f"""
 Dear Team,
 
-The purchase with ID {purchase_id} has been approved successfully by {current_user['email']}.
+The purchase with ID **{purchase_id}** for **{purchase.get('product_name', 'N/A')}** has been **APPROVED** successfully.
 
 Product Name: {purchase.get('product_name', 'N/A')}
 Product ID: {purchase['product_id']}
 Quantity: {purchase['quantity']}
-Status: Approved
-Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
+Approved By: {current_user['email']}
+Date: {current_time.strftime('%Y-%m-%d %H:%M:%S')}
 
 Regards,
 Inventory System
 """
-
-    # FIX: Sending email to the person who created the purchase (admin)
-    try:
-        send_email_alert(purchase["created_by"], subject, body)
-    except Exception as e:
-        # Log error but don't fail the API call just for email failure
-        print(f"Failed to send email alert: {e}") 
-        
-    # Fetch the updated purchase record for the response
+        try:
+            # We now use the resolved recipient_email
+            send_email_alert(recipient_email, subject, body)
+            print(f"Purchase approval email sent to: {recipient_email}")
+        except Exception as e:
+            # If the email call fails, log the error but don't fail the primary API function
+            print(f"FAILED to send email alert for purchase {purchase_id} to {recipient_email}: {e}")
+    
+    # 4. Fetch the updated purchase record for the response
     updated_purchase = purchases_collection.find_one({"purchase_id": purchase_id}, {"_id": 0})
     if updated_purchase:
+        # Convert datetimes for serialization
         for key in ("created_at", "updated_at"):
             if key in updated_purchase and isinstance(updated_purchase[key], datetime):
                 updated_purchase[key] = updated_purchase[key].isoformat()
 
     return {"message": "Purchase approved and stock updated successfully", "data": updated_purchase}
-
 # ------------------ 4️⃣ STORE MANAGER REJECTS PURCHASE (NEW ENDPOINT) ------------------
 @app.put("/purchases/{purchase_id}/reject", tags=["Purchases"])
 def reject_purchase(
@@ -1076,7 +1091,7 @@ Inventory System
 
     return {"message": "Purchase rejected and creator notified", "data": rejected_purchase}
 
-@app.post("/products/sell", tags=["Products"])
+@app.post("/products/sell", tags=["Sales"])
 def sell_product(sale: SellProduct, user=Depends(get_current_user)):
     """
     Sell a product and reduce its quantity in stock.
