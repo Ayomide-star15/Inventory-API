@@ -82,3 +82,10 @@ class PurchaseItem(BaseModel):
 class SellProduct(BaseModel):
     product_id: str
     quantity: int
+
+class UpdateSupplier(BaseModel):
+    name: Optional[str] = Field(None, description="Supplier name")
+    contact_person: Optional[str] = Field(None, description="Person to contact")
+    phone: Optional[str] = Field(None, description="Phone number")
+    email: Optional[EmailStr] = Field(None, description="Supplier email")
+    address: Optional[str] = Field(None, description="Supplier address")

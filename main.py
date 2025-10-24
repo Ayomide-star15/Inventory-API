@@ -1,22 +1,36 @@
-from fastapi import FastAPI, HTTPException, Depends,Body
+from fastapi import FastAPI, HTTPException, Depends, Body
 from typing import Optional
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pymongo import MongoClient
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-import uuid,os,smtplib,random,string
+import uuid, os, smtplib, random, string
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv('.env')
+load_dotenv(".env")
 
 
 # Import Models (Ensure Model_1.py is in same directory)
-from model import (RegisterUser, UserLogin, VerifyOTP, CreatePassword,
-                     ForgotPassword, ResetPassword, OTPOnly, AddSupplier,PurchaseItem, BulkCategory,
-                     BulkProductItem, UpdateProduct, Product,SellProduct)
+from model import (
+    RegisterUser,
+    UserLogin,
+    VerifyOTP,
+    CreatePassword,
+    ForgotPassword,
+    ResetPassword,
+    OTPOnly,
+    AddSupplier,
+    PurchaseItem,
+    BulkCategory,
+    BulkProductItem,
+    UpdateProduct,
+    Product,
+    SellProduct,
+    UpdateSupplier,
+)
 
 
 # ---------------- ENV SETUP ---------add-------
@@ -30,7 +44,9 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 STORE_API_BASE_URL = os.getenv("Store_API_URL")
 
 if not MONGODB_URI:
-    raise RuntimeError("Missing MONGODB_URI in .env. Please set it before starting the app.")
+    raise RuntimeError(
+        "Missing MONGODB_URI in .env. Please set it before starting the app."
+    )
 
 # ---------------- DB SETUP ----------------
 try:
@@ -59,36 +75,53 @@ app = FastAPI(title="Inventory System API")
 # ---------------- MIDDLEWARE ----------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*",  # your frontend URL
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---------------- SETTINGS ----------------
+DISABLE_EMAILS = os.getenv("DISABLE_EMAILS", "true").lower() == "true"
+# ✅ Change to False when deploying somewhere with email support
+DEFAULT_OTP = "123456"  # Used when email sending is off
+
+
+
+
 # ---------------- HELPER FUNCTIONS ----------------
 def send_otp_email(email: str, otp: str):
+    if DISABLE_EMAILS:
+        print(f"[EMAIL DISABLED] Would send OTP {otp} to {email}")
+        return  # Skip sending email
+
     sender_email = os.getenv("SENDER_EMAIL")
     sender_pass = os.getenv("SENDER_PASSWORD")
 
     if not sender_email or not sender_pass:
-        raise HTTPException(status_code=500, detail="Email credentials not set in environment")
+        raise HTTPException(
+            status_code=500, detail="Email credentials not set in environment"
+        )
 
     msg = MIMEText(f"Your verification OTP is {otp}. It will expire in 10 minutes.")
     msg["Subject"] = "Email Verification OTP"
-    msg["From"] = str(sender_email)
-    msg["To"] = str(email)
+    msg["From"] = sender_email
+    msg["To"] = email
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(str(sender_email), str(sender_pass))
-            server.sendmail(str(sender_email), str(email), msg.as_string())
+            server.login(sender_email, sender_pass)
+            server.sendmail(sender_email, email, msg.as_string())
     except Exception as e:
         print("Error sending email:", e)
         raise HTTPException(status_code=500, detail="Failed to send OTP email")
-    
+
+
 def send_email_alert(email: str, subject: str, body: str):
+    if DISABLE_EMAILS:
+        print(f"[EMAIL DISABLED] Would send alert '{subject}' to {email}")
+        return  # Skip sending
+
     sender_email = os.getenv("SENDER_EMAIL")
     sender_pass = os.getenv("SENDER_PASSWORD")
 
@@ -112,17 +145,22 @@ def send_email_alert(email: str, subject: str, body: str):
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     try:
         return pwd_context.verify(plain, hashed)
     except Exception:
         return False
 
-def create_access_token(data: dict, expires_delta: timedelta = timedelta(hours=2)) -> str:
+
+def create_access_token(
+    data: dict, expires_delta: timedelta = timedelta(hours=2)
+) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
@@ -140,6 +178,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+
 # ---------------- SEED ADMIN ----------------
 # ---------------- SEED ADMIN (FIXED) ----------------
 @app.on_event("startup")
@@ -151,7 +190,7 @@ def seed_admin():
 
     existing_admin = users_collection.find_one({"email": ADMIN_EMAIL})
     hashed_password = get_password_hash(ADMIN_PASSWORD)
-    
+
     admin_first_name = "Adewale"
     admin_last_name = "Ayomide (Admin)"
 
@@ -168,7 +207,7 @@ def seed_admin():
             "address": None,
             "state": None,
             "country": None,
-            "email_status": "active", # <--- CRITICAL FIX: Set to "active"
+            "email_status": "active",  # <--- CRITICAL FIX: Set to "active"
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
@@ -177,29 +216,34 @@ def seed_admin():
     else:
         # FIX 2: Ensure 'email_status' is forced to "active" during update
         update_fields = {
-            "password": hashed_password, 
+            "password": hashed_password,
             "first_name": existing_admin.get("first_name") or admin_first_name,
             "last_name": existing_admin.get("last_name") or admin_last_name,
-            "email_status": "active", # <--- CRITICAL FIX: Force status to "active"
+            "email_status": "active",  # <--- CRITICAL FIX: Force status to "active"
             "role": existing_admin.get("role") or "admin",
             "updated_at": datetime.utcnow(),
         }
-        users_collection.update_one({"_id": existing_admin["_id"]}, {"$set": update_fields})
+        users_collection.update_one(
+            {"_id": existing_admin["_id"]}, {"$set": update_fields}
+        )
         print("Admin user verified/updated with consistent fields.")
+
+
 # ---------------- ROUTES ----------------
 @app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Welcome to the Inventory System API"}
 
+
 # ---------------- Login ----------------
+# ---------------- REGISTER ----------------
 @app.post("/auth/register")
 def register_user(user: RegisterUser):
     if users_collection.find_one({"email": user.email}):
         raise HTTPException(status_code=400, detail="Email already exists")
-    
-    otp = ''.join(random.choices(string.digits, k=6))
-    otp_expire = datetime.utcnow() + timedelta(minutes=10)
 
+    otp = DEFAULT_OTP if DISABLE_EMAILS else "".join(random.choices(string.digits, k=6))
+    otp_expire = datetime.utcnow() + timedelta(minutes=10)
 
     user_data = {
         "user_id": str(uuid.uuid4()),
@@ -214,111 +258,173 @@ def register_user(user: RegisterUser):
         "email_status": "pending",
         "password": None,
         "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.utcnow(),
     }
 
     users_collection.insert_one(user_data)
-    #save otp
-    otp_data = {
-        "email": user.email,
-        "otp": otp,
-        "expires_at": otp_expire,
-        "created_at": datetime.utcnow()
-    }
+    otps_collection.insert_one(
+        {
+            "email": user.email,
+            "otp": otp,
+            "expires_at": otp_expire,
+            "type": "registration",
+            "verified": False,
+            "created_at": datetime.utcnow(),
+        }
+    )
 
-    otps_collection.insert_one(otp_data)
-    #send otp email
     send_otp_email(user.email, otp)
 
-    return {"message": "OTP sent to your email. Verify to continue."}
-
+    return {
+        "message": (
+            f"OTP sent to your email (or use default '{DEFAULT_OTP}' if emails are disabled)."
+        )
+    }
 
 @app.post("/auth/verify-otp")
 def verify_otp(data: VerifyOTP):
-    otp_entry = otps_collection.find_one({"otp": data.otp})
-    if not otp_entry:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-        
-    # Check if OTP has expired (using 'expires_at' as established in the previous fix)
-    if datetime.utcnow() > otp_entry.get("expires_at", datetime.min):
-        # Optional: Delete expired OTP, but the check below also prevents use
-        # otps_collection.delete_one({"_id": otp_entry["_id"]})
-        raise HTTPException(status_code=400, detail="OTP expired")
-        
-    # Check if OTP is already verified/used
-    if otp_entry.get("verified") is True:
-        raise HTTPException(status_code=400, detail="OTP already used.")
-
-    user_email = otp_entry["email"]
+    """
+    Verifies the OTP by finding the latest unverified registration OTP that matches the code.
+    The user's email is retrieved from the OTP database entry, allowing the client to only
+    send the OTP code.
+    """
     
-    # 🔑 FIX: Set 'verified' to True in otps_collection instead of deleting
+    # 1. Handle disabled email (debug) mode
+    if DISABLE_EMAILS and data.otp == DEFAULT_OTP:
+        # Look for the most recent unverified registration OTP entry to determine which user to verify
+        otp_entry = otps_collection.find_one(
+            {"type": "registration", "verified": False}, 
+            sort=[("created_at", -1)]
+        )
+        
+        # If no OTP entry exists (e.g., first run after seeding admin), try to find a pending user
+        if not otp_entry:
+             user_entry = users_collection.find_one(
+                {"email_status": {"$in": ["pending", "verified"]}}, 
+                sort=[("created_at", -1)]
+             )
+             if not user_entry:
+                raise HTTPException(status_code=404, detail="No unverified registration attempt found to use default OTP.")
+             user_email = user_entry["email"]
+        else:
+            user_email = otp_entry["email"]
+        
+        # Manually update the user status as if verification succeeded
+        users_collection.update_one(
+            {"email": user_email},
+            {"$set": {"email_status": "verified", "updated_at": datetime.utcnow()}},
+        )
+            
+        print(f"[OTP BYPASS] Default OTP ({DEFAULT_OTP}) accepted for {user_email}.")
+        access_token = create_access_token({"sub": user_email, "status": "verified"})
+        return {
+            "message": "OTP verified successfully (default mode). Proceed to set your password.",
+            "access_token": access_token,
+            "token_type": "bearer",
+        }
+
+    # 2. Standard Verification Flow: Find the latest UNVERIFIED registration OTP that matches the code.
+    # The query is now only on 'otp', 'verified', and 'type'.
+    stored_otp = otps_collection.find_one(
+        {
+            "otp": data.otp,
+            "verified": False,
+            "type": "registration"
+        },
+        # Sort is crucial to ensure we get the newest matching OTP
+        sort=[("created_at", -1)] 
+    )
+
+    if not stored_otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP or no unverified OTP found.")
+
+    if stored_otp["expires_at"] < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="OTP expired. Please request a new one.")
+
+    # Mark OTP as verified
     otps_collection.update_one(
-        {"_id": otp_entry["_id"]},
-        {"$set": {
-            "verified": True,
-            "updated_at": datetime.utcnow()
-        }}
+        {"_id": stored_otp["_id"]},
+        {"$set": {"verified": True, "updated_at": datetime.utcnow()}},
     )
     
-    # Update user's email_status to 'verified' to allow password creation
+    # CRITICAL FIX: Extract the email from the database record
+    user_email = stored_otp["email"] 
+
+    # Update user's email status to "verified"
     users_collection.update_one(
         {"email": user_email},
-        {"$set": {
-            "email_status": "verified",
-            "updated_at": datetime.utcnow()
-        }}
+        {"$set": {"email_status": "verified", "updated_at": datetime.utcnow()}},
     )
 
-    # Generate token carrying the 'verified' status for the next step (create-password)
     access_token = create_access_token({"sub": user_email, "status": "verified"})
     return {
-        "message": "Email verified successfully. Proceed to create your password.",
+        "message": "OTP verified successfully. Proceed to set your password.",
         "access_token": access_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
     }
 
-# ... (Part of the create-password endpoint for reference)
+
 @app.post("/auth/create-password")
 def create_password(
-    data: CreatePassword,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    data: CreatePassword, credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     token = credentials.credentials
 
     # 1. Decode JWT to get email and verification status
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        
-        # Get the subject (email) and the status set by /auth/verify-otp
+
         email: str = payload.get("sub") or ""
         status: Optional[str] = payload.get("status")
 
         if not email or status != "verified":
-            raise HTTPException(status_code=401, detail="Invalid token payload or unverified status")
-            
+            raise HTTPException(
+                status_code=401, detail="Invalid token payload or unverified status"
+            )
+
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+    print(f"DEBUG: Attempting to look up user with email from token: {email}")
 
     # 2. Find the user and check verification status
     user = users_collection.find_one({"email": email})
+
+    if not user:
+        # This occurs if the user was deleted between verification and password creation
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    current_status = user.get("email_status")
     
-    # Check if user exists AND if their email_status is 'verified'
-    if not user or user.get("email_status") != "verified": 
-        raise HTTPException(status_code=400, detail="User not verified or account already active. Please log in.")
+    if current_status == "active":
+        raise HTTPException(
+            status_code=409, 
+            detail="Account is already active. Please proceed to the login endpoint.",
+        )
+    
+    if current_status != "verified":
+        raise HTTPException(
+            status_code=400,
+            detail=f"User is not verified. Please ensure you completed the email verification step.",
+        )
+
 
     # 3. Hash and store the new password
     hashed_password = get_password_hash(data.password)
 
     users_collection.update_one(
         {"_id": user["_id"]},
-        {"$set": {
-            "password": hashed_password,
-            "email_status": "active", # Moves user to active status
-            "updated_at": datetime.utcnow()
-        }}
+        {
+            "$set": {
+                "password": hashed_password,
+                "email_status": "active",  # Moves user to active status
+                "updated_at": datetime.utcnow(),
+            }
+        },
     )
 
     return {"message": "Password created successfully. Account is now active."}
+
 @app.post("/auth/login", tags=["Login"])
 def login(credentials: UserLogin):
     """Authenticate user and return access token."""
@@ -326,15 +432,22 @@ def login(credentials: UserLogin):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if user.get("password") is None or not verify_password(credentials.password, user["password"]):
-        raise HTTPException(status_code=400, detail="Incorrect password or password not set")
-    
+    if user.get("password") is None or not verify_password(
+        credentials.password, user["password"]
+    ):
+        raise HTTPException(
+            status_code=400, detail="Incorrect password or password not set"
+        )
+
     # Check if account is active/verified
     if user.get("email_status") != "active":
-        raise HTTPException(status_code=403, detail="Account not active. Please complete verification and password setup.")
+        raise HTTPException(
+            status_code=403,
+            detail="Account not active. Please complete verification and password setup.",
+        )
 
     token = create_access_token(data={"sub": user["email"], "role": user["role"]})
-    
+
     # Clean up profile data, handle missing fields
     profile = {
         "first_name": user.get("first_name"),
@@ -354,74 +467,84 @@ def login(credentials: UserLogin):
         "profile": profile,
     }
 
-# ---------------- Password Reset ----------------
-# FIX: Adjusted /auth/forgot-password to use otps_collection
 
+# ---------------- Password Reset ----------------
 @app.post("/auth/forgot-password", tags=["Password Reset"])
 def forgot_password(data: ForgotPassword):
-    """Step 1: User requests password reset — system sends OTP to email."""
     user = users_collection.find_one({"email": data.email})
     if not user:
-        # Prevent email enumeration
-        return {"message": "If your email is registered, an OTP has been sent for password reset."}
+        # Respond generically to prevent user enumeration attacks
+        return {
+            "message": "If your email is registered, an OTP has been sent for password reset."
+        }
 
-    otp = ''.join(random.choices(string.digits, k=6))
+    otp = DEFAULT_OTP if DISABLE_EMAILS else "".join(random.choices(string.digits, k=6))
     otp_expire = datetime.utcnow() + timedelta(minutes=10)
 
-    # 🔑 FIX: Store OTP in the dedicated otps_collection
-    otps_collection.insert_one({
-        "email": data.email,
-        "otp": otp,
-        "expires_at": otp_expire,
-        "type": "password_reset", # Differentiate from registration OTPs
-        "verified": False,
-        "created_at": datetime.utcnow()
-    })
+    otps_collection.insert_one(
+        {
+            "email": data.email,
+            "otp": otp,
+            "expires_at": otp_expire,
+            "type": "password_reset",
+            "verified": False,
+            "created_at": datetime.utcnow(),
+        }
+    )
 
     send_otp_email(data.email, otp)
-    return {"message": "OTP sent to your email for password reset."}
+    return {
+        "message": (
+            f"OTP sent to your email for password reset (or use '{DEFAULT_OTP}' if emails are disabled)."
+        )
+    }
 
-
-# FIX: Adjusted /auth/verify-reset-otp to check otps_collection
 
 @app.post("/auth/verify-reset-otp", tags=["Password Reset"])
 def verify_reset_otp(data: OTPOnly):
-    """Step 2: User submits OTP, verifies it, and receives a temporary reset token."""
-    
-    # 🔑 FIX: Find OTP in otps_collection by OTP value and type
-    otp_entry = otps_collection.find_one({"otp": data.otp, "type": "password_reset"})
-    
+    # Allow default OTP when emails are disabled
+    if DISABLE_EMAILS and data.otp == DEFAULT_OTP:
+        print(f"[OTP BYPASS] Default reset OTP ({DEFAULT_OTP}) accepted.")
+        # Need to fetch *any* user email that requested a reset recently to issue a token
+        otp_entry = otps_collection.find_one({"type": "password_reset"}, sort=[("created_at", -1)])
+        
+        user_email = otp_entry["email"] if otp_entry else "default@example.com"
+        
+        access_token = create_access_token({"sub": user_email, "action": "reset"})
+        return {
+            "message": "Password reset verified (default OTP mode).",
+            "access_token": access_token,
+        }
+
+    # otherwise, check database for matching OTP entry
+    otp_entry = otps_collection.find_one(
+        {"otp": data.otp, "type": "password_reset", "verified": False}
+    )
+
     if not otp_entry:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    # Check for expiry
     if datetime.utcnow() > otp_entry["expires_at"]:
-        # Delete expired OTP
-        otps_collection.delete_one({"_id": otp_entry["_id"]})
         raise HTTPException(status_code=400, detail="OTP expired")
-        
-    if otp_entry.get("verified"):
-        raise HTTPException(status_code=400, detail="OTP already used.")
 
-    user_email = otp_entry["email"]
-    
-    # Mark OTP as verified to prevent reuse
+    # Mark OTP as used
     otps_collection.update_one(
         {"_id": otp_entry["_id"]},
         {"$set": {"verified": True, "updated_at": datetime.utcnow()}}
     )
 
-    # Generate temporary token for password reset. The token payload contains the email.
+    # Use user email from the stored record
+    user_email = otp_entry["email"]
+
     access_token = create_access_token({"sub": user_email, "action": "reset"})
-    return {"message": "OTP verified successfully. Use the access token to reset your password.", "access_token": access_token}
-
-
-# FIX: Adjusted /auth/reset-password to confirm verification status via otps_collection
+    return {
+        "message": "OTP verified successfully. Proceed to reset your password.",
+        "access_token": access_token,
+    }
 
 @app.post("/auth/reset-password", tags=["Password Reset"])
 def reset_password(
-    data: ResetPassword,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    data: ResetPassword, credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Step 3: User sets a new password after OTP verification using the temporary token."""
     token = credentials.credentials
@@ -431,40 +554,37 @@ def reset_password(
         action = payload.get("action")
         # Check for the correct action in the JWT
         if not email or action != "reset":
-            raise HTTPException(status_code=401, detail="Invalid token payload or action")
+            raise HTTPException(
+                status_code=401, detail="Invalid token payload or action"
+            )
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     user = users_collection.find_one({"email": email})
     if not user:
-        # Should not happen if token is valid, but safe guard.
         raise HTTPException(status_code=404, detail="User not found")
-        
-    # 🔑 FIX: Check for a valid, verified password_reset OTP entry for this email
-    # Look for a *recently* verified OTP. We'll use a 5-minute window or similar for safety.
-    # Note: A more robust solution would be to use the token expiry itself as the sole time limit.
-    # For now, we rely on the successful JWT decoding.
-    
-    # We rely primarily on the 'action: reset' token, but we should clear the used OTP entry 
-    # to maintain cleanliness, which is done below.
 
     hashed_password = get_password_hash(data.password)
-    
+
     # Update user's password
     users_collection.update_one(
         {"_id": user["_id"]},
-        {"$set": {
-            "password": hashed_password,
-            "updated_at": datetime.utcnow()
-        }}
+        {"$set": {"password": hashed_password, "updated_at": datetime.utcnow()}},
     )
-    
+
     # Clean up the OTP records for this email and type that are already verified.
-    # This prevents the "verified" state from remaining in the DB indefinitely.
-    otps_collection.delete_many({"email": email, "type": "password_reset", "verified": True})
+    otps_collection.delete_many(
+        {"email": email, "type": "password_reset", "verified": True}
+    )
+
+    return {"message": "Password reset successfully. You can now log in."}
 
 
-    return {"message": "Password reset successfully."}
+
+
+# ... (Part of the create-password endpoint for reference)
+
+
 # ---------------- User Profile ----------------
 @app.get("/users/me", tags=["Users"])
 def get_user_profile(current_user: dict = Depends(get_current_user)):
@@ -472,67 +592,124 @@ def get_user_profile(current_user: dict = Depends(get_current_user)):
     current_user.pop("_id", None)
     # Password must be removed before returning
     current_user.pop("password", None)
-    
+
     # FIX: Ensure datetime objects are converted to ISO format for safe JSON serialization
-    if 'created_at' in current_user and isinstance(current_user['created_at'], datetime):
-         current_user['created_at'] = current_user['created_at'].isoformat()
-    if 'updated_at' in current_user and isinstance(current_user['updated_at'], datetime):
-         current_user['updated_at'] = current_user['updated_at'].isoformat()
-         
+    if "created_at" in current_user and isinstance(
+        current_user["created_at"], datetime
+    ):
+        current_user["created_at"] = current_user["created_at"].isoformat()
+    if "updated_at" in current_user and isinstance(
+        current_user["updated_at"], datetime
+    ):
+        current_user["updated_at"] = current_user["updated_at"].isoformat()
+
     return {
         "message": "Protected profile access successful",
         "user": current_user,
     }
-    
+
+@app.get("/admin/users/{user_id}", tags=["Admin"])
+def get_user(user_id: str, current_user=Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access only")
+
+    user = users_collection.find_one({"user_id": user_id}, {"_id": 0, "password": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@app.delete("/admin/users/{user_id}", tags=["Admin"])
+def delete_user(user_id: str, current_user=Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access only")
+
+    result = users_collection.delete_one({"user_id": user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "User deleted successfully"}
+
+
+@app.get("/users", tags=["Users"])
+def get_all_users(current_user: dict = Depends(get_current_user)):
+    """
+    Fetch all users in the system.
+    - Only admin can access this route.
+    - Passwords and internal IDs are excluded.
+    """
+    # Authorization check
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized to view all users")
+
+    # Fetch all users excluding passwords
+    users = list(users_collection.find({}, {"_id": 0, "password": 0}))
+
+    # Convert datetime fields to string for JSON serialization
+    for user in users:
+        if "created_at" in user and isinstance(user["created_at"], datetime):
+            user["created_at"] = user["created_at"].isoformat()
+        if "updated_at" in user and isinstance(user["updated_at"], datetime):
+            user["updated_at"] = user["updated_at"].isoformat()
+
+    return {
+        "count": len(users),
+        "users": users
+    }
+
+
+
 # ---------------- CATEGORY ENDPOINTS ----------------
 @app.post("/categories/bulk", tags=["Categories"])
 def create_multiple_categories(data: BulkCategory, user=Depends(get_current_user)):
-    
+
     if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to create categories")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to create categories"
+        )
 
     inserted = []
     for name in data.categories:
         name_lower = name.lower().strip()
         if categories_collection.find_one({"name": name_lower}):
             continue
-            
+
         new_category = {
             "category_id": str(uuid.uuid4()),
             "name": name_lower,
             "created_by": user["user_id"],
-            "created_at": datetime.utcnow()
+            "created_at": datetime.utcnow(),
         }
-        
+
         result = categories_collection.insert_one(new_category)
-        
+
         # FIX: The original code contained a correct fix for removing '_id'.
         # Re-implementing the safe removal and conversion of datetime.
-        new_category.pop('_id', None)
-        
+        new_category.pop("_id", None)
+
         # Convert datetime objects to string before appending
-        if 'created_at' in new_category:
-            new_category['created_at'] = new_category['created_at'].isoformat()
-        
+        if "created_at" in new_category:
+            new_category["created_at"] = new_category["created_at"].isoformat()
+
         inserted.append(new_category)
 
     return {
         "message": "Categories created successfully",
         "inserted_count": len(inserted),
-        "data": inserted
+        "data": inserted,
     }
+
 
 @app.get("/categories", tags=["Categories"])
 def get_all_categories(user=Depends(get_current_user)):
-    
-    cats = list(categories_collection.find({}, {"_id": 0})) 
-    
+
+    cats = list(categories_collection.find({}, {"_id": 0}))
+
     # FIX: Ensure datetime objects are converted to ISO format
     for cat in cats:
-        if 'created_at' in cat and isinstance(cat['created_at'], datetime):
-            cat['created_at'] = cat['created_at'].isoformat()
-            
+        if "created_at" in cat and isinstance(cat["created_at"], datetime):
+            cat["created_at"] = cat["created_at"].isoformat()
+
     return {"count": len(cats), "data": cats}
+
 
 @app.delete("/categories/{category_id}", tags=["Categories"])
 def delete_category(category_id: str, user=Depends(get_current_user)):
@@ -544,7 +721,9 @@ def delete_category(category_id: str, user=Depends(get_current_user)):
 
     # Authorization check
     if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to delete categories")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to delete categories"
+        )
 
     # check if category exists
     category = categories_collection.find_one({"category_id": category_id})
@@ -555,15 +734,19 @@ def delete_category(category_id: str, user=Depends(get_current_user)):
     categories_collection.delete_one({"category_id": category_id})
 
     # Optionally delete all products in that category
-    deleted_products = products_collection.delete_many({"category_id": category_id}).deleted_count
+    deleted_products = products_collection.delete_many(
+        {"category_id": category_id}
+    ).deleted_count
 
     return {
         "message": "Category deleted successfully",
         "category_id": category_id,
-        "deleted_products": deleted_products
+        "deleted_products": deleted_products,
     }
 
+
 # ---------------- PRODUCT ENDPOINTS ----------------
+
 
 @app.post("/products/bulk", tags=["Products"])
 def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user)):
@@ -589,10 +772,9 @@ def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user))
         product_name = item.name.lower().strip()
 
         # check if product already exists in same category
-        existing = products_collection.find_one({
-            "name": product_name,
-            "category_id": data.category_id
-        })
+        existing = products_collection.find_one(
+            {"name": product_name, "category_id": data.category_id}
+        )
         if existing:
             skipped_products.append(product_name)
             continue
@@ -611,11 +793,11 @@ def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user))
 
         products_collection.insert_one(new_product)
         new_product.pop("_id", None)
-        
+
         # Convert datetime objects to string before appending
-        if 'created_at' in new_product:
-            new_product['created_at'] = new_product['created_at'].isoformat()
-            
+        if "created_at" in new_product:
+            new_product["created_at"] = new_product["created_at"].isoformat()
+
         inserted_products.append(new_product)
 
     return {
@@ -623,34 +805,36 @@ def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user))
         "inserted_count": len(inserted_products),
         "skipped_count": len(skipped_products),
         "inserted": inserted_products,
-        "skipped": skipped_products
+        "skipped": skipped_products,
     }
+
 
 @app.get("/products", tags=["Products"])
 def get_all_products(user=Depends(get_current_user)):
     """
-    Retrieves all products, ensuring datetime objects are correctly serialized 
+    Retrieves all products, ensuring datetime objects are correctly serialized
     to prevent Pydantic errors which can cause fields (like product_id) to disappear.
     """
-    
+
     # 1. Fetch data, excluding the MongoDB internal _id field
     products_data = list(products_collection.find({}, {"_id": 0}))
-    
+
     # 2. Convert all datetime objects to ISO strings
     for product in products_data:
-        if 'created_at' in product and isinstance(product['created_at'], datetime):
-            product['created_at'] = product['created_at'].isoformat()
-        if 'updated_at' in product and isinstance(product.get('updated_at'), datetime): # handle optional update field
-            product['updated_at'] = product['updated_at'].isoformat()
-            
+        if "created_at" in product and isinstance(product["created_at"], datetime):
+            product["created_at"] = product["created_at"].isoformat()
+        if "updated_at" in product and isinstance(
+            product.get("updated_at"), datetime
+        ):  # handle optional update field
+            product["updated_at"] = product["updated_at"].isoformat()
+
     # The list of dictionaries is returned, and FastAPI validates each against the Product model
     return products_data
 
+
 @app.put("/products/{product_id}", tags=["Products"])
 def update_product(
-    product_id: str,
-    update: UpdateProduct = Body(...),
-    user=Depends(get_current_user)
+    product_id: str, update: UpdateProduct = Body(...), user=Depends(get_current_user)
 ):
     """
     Update product details (name / price / quantity).
@@ -691,12 +875,13 @@ def update_product(
 
     # 5) apply update
     result = products_collection.update_one(
-        {"product_id": product_id},
-        {"$set": update_fields}
+        {"product_id": product_id}, {"$set": update_fields}
     )
 
     # 6) fetch updated product
-    updated_product = products_collection.find_one({"product_id": product_id}, {"_id": 0})
+    updated_product = products_collection.find_one(
+        {"product_id": product_id}, {"_id": 0}
+    )
     if not updated_product:
         raise HTTPException(status_code=500, detail="Error fetching updated product")
 
@@ -705,10 +890,8 @@ def update_product(
         if key in updated_product and isinstance(updated_product[key], datetime):
             updated_product[key] = updated_product[key].isoformat()
 
-    return {
-        "message": "Product updated successfully",
-        "data": updated_product
-    }
+    return {"message": "Product updated successfully", "data": updated_product}
+
 
 @app.delete("/products/{product_id}", tags=["Products"])
 def delete_product(product_id: str, user=Depends(get_current_user)):
@@ -718,7 +901,7 @@ def delete_product(product_id: str, user=Depends(get_current_user)):
     """
 
     # Authorization check
-    if user.get("role") not in ["admin", "store_manager"]:
+    if user.get("role") not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to delete products")
 
     # Check if product exists
@@ -734,28 +917,24 @@ def delete_product(product_id: str, user=Depends(get_current_user)):
         "message": "Product deleted successfully",
         "deleted_product_id": product_id,
         "deleted_by": user.get("user_id") or user.get("email"),
-        "deleted_at": datetime.utcnow().isoformat()
+        "deleted_at": datetime.utcnow().isoformat(),
     }
+
 
 # ----------------- SUPPLIER ENDPOINTS ----------------
 
+
 @app.post("/suppliers", tags=["Suppliers"])
-def add_supplier(
-    supplier: AddSupplier,
-    current_user: dict = Depends(get_current_user)
-):
+def add_supplier(supplier: AddSupplier, current_user: dict = Depends(get_current_user)):
     """Admin can add new suppliers"""
     # Ensure only admin can add suppliers
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admin can add suppliers")
 
     # Prevent duplicate supplier names or emails
-    existing = suppliers_collection.find_one({
-        "$or": [
-            {"supplier_name": supplier.supplier_name},
-            {"email": supplier.email}
-        ]
-    })
+    existing = suppliers_collection.find_one(
+        {"$or": [{"supplier_name": supplier.supplier_name}, {"email": supplier.email}]}
+    )
     if existing:
         raise HTTPException(status_code=400, detail="Supplier already exists")
 
@@ -769,23 +948,21 @@ def add_supplier(
         "company_name": supplier.company_name,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
-        "created_by": current_user["email"]
+        "created_by": current_user["email"],
     }
 
     suppliers_collection.insert_one(supplier_data)
-    
+
     # FIX: Remove the non-serializable _id field
     supplier_data.pop("_id", None)
-    
+
     # FIX: Ensure datetime objects are converted to ISO format
     for key in ("created_at", "updated_at"):
         if key in supplier_data and isinstance(supplier_data[key], datetime):
             supplier_data[key] = supplier_data[key].isoformat()
-    
-    return {
-        "message": "Supplier added successfully",
-        "supplier": supplier_data
-    }
+
+    return {"message": "Supplier added successfully", "supplier": supplier_data}
+
 
 @app.get("/suppliers", tags=["Suppliers"])
 def get_all_suppliers(user=Depends(get_current_user)):
@@ -802,18 +979,16 @@ def get_all_suppliers(user=Depends(get_current_user)):
     suppliers = list(suppliers_collection.find({}, {"_id": 0}))
 
     if not suppliers:
-        return {"count": 0, "suppliers": []} # Return empty list instead of 404
+        return {"count": 0, "suppliers": []}  # Return empty list instead of 404
 
     # FIX: Ensure datetime objects are converted to ISO format
     for supplier in suppliers:
         for key in ("created_at", "updated_at"):
             if key in supplier and isinstance(supplier[key], datetime):
                 supplier[key] = supplier[key].isoformat()
-                
-    return {
-        "count": len(suppliers),
-        "suppliers": suppliers
-    }
+
+    return {"count": len(suppliers), "suppliers": suppliers}
+
 
 @app.get("/suppliers/{supplier_id}", tags=["Suppliers"])
 def get_supplier_by_id(supplier_id: str, user=Depends(get_current_user)):
@@ -824,14 +999,16 @@ def get_supplier_by_id(supplier_id: str, user=Depends(get_current_user)):
 
     # Authorization check
     if user["role"] not in ["admin", "store_manager"]:
-        raise HTTPException(status_code=403, detail="Not authorized to view supplier info")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to view supplier info"
+        )
 
     # Find supplier
     supplier = suppliers_collection.find_one({"supplier_id": supplier_id}, {"_id": 0})
 
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
-        
+
     # FIX: Ensure datetime objects are converted to ISO format
     for key in ("created_at", "updated_at"):
         if key in supplier and isinstance(supplier[key], datetime):
@@ -849,9 +1026,11 @@ def delete_supplier(supplier_id: str, user=Depends(get_current_user)):
 
     # Authorization check
     if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to delete suppliers")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to delete suppliers"
+        )
 
-    #Find the supplier
+    # Find the supplier
     supplier = suppliers_collection.find_one({"supplier_id": supplier_id})
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
@@ -863,10 +1042,12 @@ def delete_supplier(supplier_id: str, user=Depends(get_current_user)):
         "message": "Supplier deleted successfully",
         "deleted_supplier_id": supplier_id,
         "deleted_by": user["email"],
-        "deleted_at": datetime.utcnow().isoformat()
+        "deleted_at": datetime.utcnow().isoformat(),
     }
-    
+
+
 # ---------------- PURCHASE ENDPOINTS ----------------
+
 
 @app.post("/purchases", tags=["Purchases"])
 def create_purchase(item: PurchaseItem, user=Depends(get_current_user)):
@@ -876,7 +1057,7 @@ def create_purchase(item: PurchaseItem, user=Depends(get_current_user)):
     """
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Only admin can make purchases")
-    
+
     # Check if product and supplier exist
     product = products_collection.find_one({"product_id": item.product_id})
     if not product:
@@ -886,36 +1067,35 @@ def create_purchase(item: PurchaseItem, user=Depends(get_current_user)):
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
-
     # Build purchase record
     purchase_data = {
         "purchase_id": str(uuid.uuid4()),
         "supplier_id": item.supplier_id,
         "product_id": item.product_id,
-        "product_name": product["name"], # Add product name for better record keeping
+        "product_name": product["name"],  # Add product name for better record keeping
         "quantity": item.quantity,
         "status": "pending",
         "created_by": user["email"],
         "approved_by": None,
         "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.utcnow(),
     }
 
     # Save to DB
     purchases_collection.insert_one(purchase_data)
-    
+
     # FIX: Remove the non-serializable _id field and convert datetimes
     purchase_data.pop("_id", None)
     for key in ("created_at", "updated_at"):
         if key in purchase_data and isinstance(purchase_data[key], datetime):
             purchase_data[key] = purchase_data[key].isoformat()
 
-
     return {
         "message": "Purchase created successfully. Pending approval.",
-        "data": purchase_data
+        "data": purchase_data,
     }
-    
+
+
 # ------------------ 2️⃣ VIEW PENDING PURCHASES ------------------
 @app.get("/purchases/pending", tags=["Purchases"])
 def view_pending_purchases(current_user=Depends(get_current_user)):
@@ -927,7 +1107,7 @@ def view_pending_purchases(current_user=Depends(get_current_user)):
 
     # Fetch, excluding _id
     purchases = list(purchases_collection.find({"status": "pending"}, {"_id": 0}))
-    
+
     # FIX: Convert datetimes for serialization
     for p in purchases:
         for key in ("created_at", "updated_at"):
@@ -945,7 +1125,9 @@ def approve_purchase(purchase_id: str, current_user=Depends(get_current_user)):
     Roles allowed: admin, store_manager.
     """
     if current_user["role"] not in ["admin", "store_manager"]:
-        raise HTTPException(status_code=403, detail="Not authorized to approve purchases")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to approve purchases"
+        )
 
     purchase = purchases_collection.find_one({"purchase_id": purchase_id})
     if not purchase:
@@ -953,34 +1135,51 @@ def approve_purchase(purchase_id: str, current_user=Depends(get_current_user)):
 
     if purchase["status"] == "approved":
         raise HTTPException(status_code=400, detail="Purchase already approved")
-        
+
     # Check product existence before approval
     product = products_collection.find_one({"product_id": purchase["product_id"]})
     if not product:
         # Mark purchase as error/invalid if product does not exist
-        purchases_collection.update_one({"_id": purchase["_id"]}, {"$set": {"status": "error", "error_reason": "Product not found"}})
-        raise HTTPException(status_code=404, detail=f"Product with ID {purchase['product_id']} not found. Cannot approve.")
-    
+        purchases_collection.update_one(
+            {"_id": purchase["_id"]},
+            {"$set": {"status": "error", "error_reason": "Product not found"}},
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product with ID {purchase['product_id']} not found. Cannot approve.",
+        )
+
     current_time = datetime.utcnow()
 
     # 1. Update purchase status
     purchases_collection.update_one(
         {"purchase_id": purchase_id},
-        {"$set": {"status": "approved", "approved_by": current_user["email"], "updated_at": current_time}}
+        {
+            "$set": {
+                "status": "approved",
+                "approved_by": current_user["email"],
+                "updated_at": current_time,
+            }
+        },
     )
 
     # 2. Update product quantity and timestamp: Use $inc for atomic quantity increase and $set for updated_at
     products_collection.update_one(
-        {"product_id": purchase["product_id"]}, 
-        {"$inc": {"quantity": purchase["quantity"]}, "$set": {"updated_at": current_time}}
+        {"product_id": purchase["product_id"]},
+        {
+            "$inc": {"quantity": purchase["quantity"]},
+            "$set": {"updated_at": current_time},
+        },
     )
 
     # 3. Send Email Alert with Fallback 📧
     # Fallback to ADMIN_EMAIL if the creator's email is missing or invalid.
     recipient_email = purchase.get("created_by") or os.getenv("ADMIN_EMAIL")
-    
+
     if not recipient_email:
-        print("CRITICAL: Failed to determine a recipient email for purchase approval. ADMIN_EMAIL is also missing.")
+        print(
+            "CRITICAL: Failed to determine a recipient email for purchase approval. ADMIN_EMAIL is also missing."
+        )
         # Proceed with API response even if email fails
     else:
         subject = f"✅ Purchase Approved: {purchase_id}"
@@ -1004,57 +1203,69 @@ Inventory System
             print(f"Purchase approval email sent to: {recipient_email}")
         except Exception as e:
             # If the email call fails, log the error but don't fail the primary API function
-            print(f"FAILED to send email alert for purchase {purchase_id} to {recipient_email}: {e}")
-    
+            print(
+                f"FAILED to send email alert for purchase {purchase_id} to {recipient_email}: {e}"
+            )
+
     # 4. Fetch the updated purchase record for the response
-    updated_purchase = purchases_collection.find_one({"purchase_id": purchase_id}, {"_id": 0})
+    updated_purchase = purchases_collection.find_one(
+        {"purchase_id": purchase_id}, {"_id": 0}
+    )
     if updated_purchase:
         # Convert datetimes for serialization
         for key in ("created_at", "updated_at"):
             if key in updated_purchase and isinstance(updated_purchase[key], datetime):
                 updated_purchase[key] = updated_purchase[key].isoformat()
 
-    return {"message": "Purchase approved and stock updated successfully", "data": updated_purchase}
+    return {
+        "message": "Purchase approved and stock updated successfully",
+        "data": updated_purchase,
+    }
+
+
 # ------------------ 4️⃣ STORE MANAGER REJECTS PURCHASE (NEW ENDPOINT) ------------------
 @app.put("/purchases/{purchase_id}/reject", tags=["Purchases"])
 def reject_purchase(
-    purchase_id: str, 
+    purchase_id: str,
     # Use Optional[str] to allow the user to provide a reason in the request body
     rejection_reason: Optional[str] = Body(None, embed=True, alias="reason"),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """
     Explicitly rejects a pending purchase order by ID.
     Roles allowed: admin, store_manager.
     """
     if current_user["role"] not in ["admin", "store_manager"]:
-        raise HTTPException(status_code=403, detail="Not authorized to reject purchases")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to reject purchases"
+        )
 
     purchase = purchases_collection.find_one({"purchase_id": purchase_id})
     if not purchase:
         raise HTTPException(status_code=404, detail="Purchase not found")
 
     if purchase["status"] == "approved":
-        raise HTTPException(status_code=400, detail="Cannot reject, purchase is already approved.")
+        raise HTTPException(
+            status_code=400, detail="Cannot reject, purchase is already approved."
+        )
     if purchase["status"] == "rejected":
         # Allow rejection again if status is already rejected (e.g., to update reason)
-        pass 
-        
+        pass
+
     # Build update operation
     update_fields = {
-        "status": "rejected", 
-        "rejected_by": current_user["email"], 
-        "updated_at": datetime.utcnow()
+        "status": "rejected",
+        "rejected_by": current_user["email"],
+        "updated_at": datetime.utcnow(),
     }
-    
+
     # Add reason if provided
     reason_text = rejection_reason if rejection_reason else "No reason provided."
     update_fields["rejection_reason"] = reason_text
 
     # Update the purchase record
     purchases_collection.update_one(
-        {"purchase_id": purchase_id}, 
-        {"$set": update_fields}
+        {"purchase_id": purchase_id}, {"$set": update_fields}
     )
 
     # --- SEND EMAIL ALERT TO PURCHASE CREATOR (ADMIN) ---
@@ -1079,17 +1290,25 @@ Inventory System
         # Send email to the person who created the purchase (created_by is typically the Admin initiating the purchase)
         send_email_alert(purchase["created_by"], subject, body)
     except Exception as e:
-        print(f"Failed to send rejection email alert: {e}") 
+        print(f"Failed to send rejection email alert: {e}")
         # API call proceeds even if email fails
 
     # Fetch the final record for response
-    rejected_purchase = purchases_collection.find_one({"purchase_id": purchase_id}, {"_id": 0})
+    rejected_purchase = purchases_collection.find_one(
+        {"purchase_id": purchase_id}, {"_id": 0}
+    )
     if rejected_purchase:
         for key in ("created_at", "updated_at"):
-            if key in rejected_purchase and isinstance(rejected_purchase[key], datetime):
+            if key in rejected_purchase and isinstance(
+                rejected_purchase[key], datetime
+            ):
                 rejected_purchase[key] = rejected_purchase[key].isoformat()
 
-    return {"message": "Purchase rejected and creator notified", "data": rejected_purchase}
+    return {
+        "message": "Purchase rejected and creator notified",
+        "data": rejected_purchase,
+    }
+
 
 @app.post("/products/sell", tags=["Sales"])
 def sell_product(sale: SellProduct, user=Depends(get_current_user)):
@@ -1109,18 +1328,26 @@ def sell_product(sale: SellProduct, user=Depends(get_current_user)):
 
     # Validate quantity
     if sale.quantity <= 0:
-        raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
+        raise HTTPException(
+            status_code=400, detail="Quantity must be greater than zero"
+        )
 
     if sale.quantity > product["quantity"]:
-        raise HTTPException(status_code=400, detail=f"Insufficient stock. Available: {product['quantity']}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient stock. Available: {product['quantity']}",
+        )
 
     # Reduce quantity: Use $inc for atomic operation
     products_collection.update_one(
         {"product_id": sale.product_id},
-        {"$inc": {"quantity": -sale.quantity}, "$set": {"updated_at": datetime.utcnow()}}
+        {
+            "$inc": {"quantity": -sale.quantity},
+            "$set": {"updated_at": datetime.utcnow()},
+        },
     )
-    
-    new_quantity = product["quantity"] - sale.quantity # Calculate for alert
+
+    new_quantity = product["quantity"] - sale.quantity  # Calculate for alert
 
     # Record the sale
     price_per_unit = product.get("price", 0)
@@ -1162,30 +1389,36 @@ def sell_product(sale: SellProduct, user=Depends(get_current_user)):
                 send_email_alert(admin_email, subject, body)
                 print(f"Low stock alert sent to {admin_email} for {product['name']}")
             else:
-                 print("ADMIN_EMAIL not configured for low stock alert.")
+                print("ADMIN_EMAIL not configured for low stock alert.")
         except Exception as e:
             print("Failed to send low stock email:", e)
 
     # Response
-    updated_product = products_collection.find_one({"product_id": sale.product_id}, {"_id": 0})
-    
+    updated_product = products_collection.find_one(
+        {"product_id": sale.product_id}, {"_id": 0}
+    )
+
     # FIX: Remove _id and convert datetimes for safe response
     sale_record.pop("_id", None)
-    if 'sold_at' in sale_record:
-        sale_record['sold_at'] = sale_record['sold_at'].isoformat()
+    if "sold_at" in sale_record:
+        sale_record["sold_at"] = sale_record["sold_at"].isoformat()
     if updated_product:
         for key in ("created_at", "updated_at"):
             if key in updated_product and isinstance(updated_product[key], datetime):
                 updated_product[key] = updated_product[key].isoformat()
-        updated_product["quantity"] = new_quantity # Ensure the new quantity is correct in the response
-        
+        updated_product["quantity"] = (
+            new_quantity  # Ensure the new quantity is correct in the response
+        )
+
     return {
         "message": f"Sold {sale.quantity} units of {product['name']}",
         "product": updated_product,
         "sale_record": sale_record,
     }
 
+
 # ----------------- SALE VIEW ENDPOINT -----------------
+
 
 @app.get("/sales", tags=["Sales"])
 def get_all_sales(current_user=Depends(get_current_user)):
@@ -1193,10 +1426,12 @@ def get_all_sales(current_user=Depends(get_current_user)):
     Retrieves all sales records.
     Roles allowed: admin, store_manager.
     """
-    
+
     # 1. Authorization check
     if current_user["role"] not in ["admin", "store_manager"]:
-        raise HTTPException(status_code=403, detail="Not authorized to view sales records")
+        raise HTTPException(
+            status_code=403, detail="Not authorized to view sales records"
+        )
 
     # 2. Fetch all sales, excluding the MongoDB default _id field
     sales_list = list(sales_collection.find({}, {"_id": 0}))
@@ -1205,13 +1440,115 @@ def get_all_sales(current_user=Depends(get_current_user)):
     for sale in sales_list:
         if "sold_at" in sale and isinstance(sale["sold_at"], datetime):
             sale["sold_at"] = sale["sold_at"].isoformat()
-            
+
     if not sales_list:
         return {"message": "No sales records found", "data": []}
 
     return {
         "message": "Sales records retrieved successfully",
         "count": len(sales_list),
-        "data": sales_list
+        "data": sales_list,
+    }
+
+@app.get("/products/category/{category_id}", tags=["Products"])
+def get_products_by_category(category_id: str, user=Depends(get_current_user)):
+    """Fetch all products belonging to a specific category."""
+    if user["role"] not in ["admin", "store_manager", "sales_staff"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view products")
+
+    products = list(products_collection.find({"category_id": category_id}, {"_id": 0}))
+    if not products:
+        return {"count": 0, "data": []}
+
+    for product in products:
+        for key in ("created_at", "updated_at"):
+            if key in product and isinstance(product[key], datetime):
+                product[key] = product[key].isoformat()
+
+    return {"count": len(products), "data": products}
+
+@app.get("/purchases", tags=["Purchases"])
+def get_all_purchases(user=Depends(get_current_user)):
+    """Fetch all purchase records (approved, pending, rejected)."""
+    if user["role"] not in ["admin", "store_manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view purchases")
+
+    purchases = list(purchases_collection.find({}, {"_id": 0}))
+    for p in purchases:
+        for key in ("created_at", "updated_at"):
+            if key in p and isinstance(p[key], datetime):
+                p[key] = p[key].isoformat()
+
+    return {"count": len(purchases), "data": purchases}
+
+@app.put("/suppliers/{supplier_id}", tags=["Suppliers"])
+def update_supplier(
+    supplier_id: str,
+    update: UpdateSupplier,
+    user=Depends(get_current_user)
+):
+    """Update supplier information (admin only)."""
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can update suppliers")
+
+    update_fields = {k: v for k, v in update.dict().items() if v is not None}
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    update_fields["updated_at"] = datetime.utcnow()
+
+    # Update supplier in DB
+    result = suppliers_collection.update_one(
+        {"supplier_id": supplier_id}, {"$set": update_fields}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    # Fetch updated supplier
+    supplier = suppliers_collection.find_one({"supplier_id": supplier_id}, {"_id": 0})
+
+    # ✅ Handle case where supplier might still be None
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found after update")
+
+    # ✅ Convert datetime fields safely
+    for key in ("created_at", "updated_at"):
+        if key in supplier and isinstance(supplier[key], datetime):
+            supplier[key] = supplier[key].isoformat()
+
+    return {"message": "Supplier updated successfully", "supplier": supplier}
+
+@app.get("/sales/product/{product_id}", tags=["Sales"])
+def get_sales_by_product(product_id: str, user=Depends(get_current_user)):
+    """Retrieve all sales for a specific product."""
+    if user["role"] not in ["admin", "store_manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view sales")
+
+    sales = list(sales_collection.find({"product_id": product_id}, {"_id": 0}))
+    for sale in sales:
+        if "sold_at" in sale and isinstance(sale["sold_at"], datetime):
+            sale["sold_at"] = sale["sold_at"].isoformat()
+
+    return {"count": len(sales), "data": sales}
+
+@app.get("/dashboard/stats", tags=["Dashboard"])
+def dashboard_stats(user=Depends(get_current_user)):
+    """Get overall system statistics."""
+    if user["role"] not in ["admin", "store_manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    total_products = products_collection.count_documents({})
+    total_suppliers = suppliers_collection.count_documents({})
+    total_sales = sales_collection.count_documents({})
+    total_purchases = purchases_collection.count_documents({})
+    low_stock_count = products_collection.count_documents({"quantity": {"$lte": 5}})
+
+    return {
+        "total_products": total_products,
+        "total_suppliers": total_suppliers,
+        "total_sales": total_sales,
+        "total_purchases": total_purchases,
+        "low_stock": low_stock_count,
     }
 
