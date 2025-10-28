@@ -89,3 +89,15 @@ class UpdateSupplier(BaseModel):
     phone: Optional[str] = Field(None, description="Phone number")
     email: Optional[EmailStr] = Field(None, description="Supplier email")
     address: Optional[str] = Field(None, description="Supplier address")
+
+class UpdateUserProfile(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+
+class UpdateUserRole(BaseModel):
+    user_id: str
+    role: str

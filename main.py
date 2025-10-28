@@ -30,6 +30,9 @@ from model import (
     Product,
     SellProduct,
     UpdateSupplier,
+    UpdateUserProfile,
+    UpdateUserRole
+
 )
 
 
@@ -154,7 +157,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(
-    data: dict, expires_delta: timedelta = timedelta(hours=2)
+    data: dict, expires_delta: timedelta = timedelta(hours=24)
 ) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
@@ -178,55 +181,64 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-
-# ---------------- SEED ADMIN ----------------
 # ---------------- SEED ADMIN (FIXED) ----------------
 @app.on_event("startup")
-def seed_admin():
-    """Seeds or updates the initial admin user on startup."""
-    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
-        # This is a critical error, keep the original RuntimeError
-        raise RuntimeError("Missing ADMIN_EMAIL or ADMIN_PASSWORD in .env file")
-
-    existing_admin = users_collection.find_one({"email": ADMIN_EMAIL})
-    hashed_password = get_password_hash(ADMIN_PASSWORD)
-
-    admin_first_name = "Adewale"
-    admin_last_name = "Ayomide (Admin)"
-
-    if not existing_admin:
-        # FIX 1: Ensure 'email_status' is set to "active" during initial creation
-        admin_data = {
-            "user_id": str(uuid.uuid4()),
-            "first_name": admin_first_name,
-            "last_name": admin_last_name,
-            "email": ADMIN_EMAIL,
-            "password": hashed_password,
-            "role": "admin",
-            "phone_number": None,
-            "address": None,
-            "state": None,
-            "country": None,
-            "email_status": "active",  # <--- CRITICAL FIX: Set to "active"
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+def seed_admins():
+    """Seeds or updates multiple admin users on startup."""
+    admin_accounts = [
+        {
+            "email": os.getenv("ADMIN_EMAIL_1"),
+            "password": os.getenv("ADMIN_PASSWORD_1"),
+            "first_name": "Adewale",
+            "last_name": "Ayomide (Admin 1)"
+        },
+        {
+            "email": os.getenv("ADMIN_EMAIL_2"),
+            "password": os.getenv("ADMIN_PASSWORD_2"),
+            "first_name": "Al-ameen",
+            "last_name": "Akinade (Admin 2)"
         }
-        users_collection.insert_one(admin_data)
-        print(f"New admin seeded with email: {ADMIN_EMAIL}")
-    else:
-        # FIX 2: Ensure 'email_status' is forced to "active" during update
-        update_fields = {
-            "password": hashed_password,
-            "first_name": existing_admin.get("first_name") or admin_first_name,
-            "last_name": existing_admin.get("last_name") or admin_last_name,
-            "email_status": "active",  # <--- CRITICAL FIX: Force status to "active"
-            "role": existing_admin.get("role") or "admin",
-            "updated_at": datetime.utcnow(),
-        }
-        users_collection.update_one(
-            {"_id": existing_admin["_id"]}, {"$set": update_fields}
-        )
-        print("Admin user verified/updated with consistent fields.")
+    ]
+
+    for admin in admin_accounts:
+        if not admin["email"] or not admin["password"]:
+            print(f"⚠️ Skipping admin with missing credentials: {admin}")
+            continue
+
+        existing_admin = users_collection.find_one({"email": admin["email"]})
+        hashed_password = get_password_hash(admin["password"])
+
+        if not existing_admin:
+            admin_data = {
+                "user_id": str(uuid.uuid4()),
+                "first_name": admin["first_name"],
+                "last_name": admin["last_name"],
+                "email": admin["email"],
+                "password": hashed_password,
+                "role": "admin",
+                "phone_number": None,
+                "address": None,
+                "state": None,
+                "country": None,
+                "email_status": "active",
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+            users_collection.insert_one(admin_data)
+            print(f"✅ New admin seeded: {admin['email']}")
+        else:
+            users_collection.update_one(
+                {"_id": existing_admin["_id"]},
+                {
+                    "$set": {
+                        "password": hashed_password,
+                        "email_status": "active",
+                        "role": "admin",
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+            print(f"🔁 Admin updated: {admin['email']}")
 
 
 # ---------------- ROUTES ----------------
@@ -234,8 +246,6 @@ def seed_admin():
 def read_root():
     return {"message": "Welcome to the Inventory System API"}
 
-
-# ---------------- Login ----------------
 # ---------------- REGISTER ----------------
 @app.post("/auth/register")
 def register_user(user: RegisterUser):
@@ -408,7 +418,6 @@ def create_password(
             detail=f"User is not verified. Please ensure you completed the email verification step.",
         )
 
-
     # 3. Hash and store the new password
     hashed_password = get_password_hash(data.password)
 
@@ -436,7 +445,7 @@ def login(credentials: UserLogin):
         credentials.password, user["password"]
     ):
         raise HTTPException(
-            status_code=400, detail="Incorrect password or password not set"
+            status_code=400, detail="Incorrect password or wrong email"
         )
 
     # Check if account is active/verified
@@ -475,7 +484,7 @@ def forgot_password(data: ForgotPassword):
     if not user:
         # Respond generically to prevent user enumeration attacks
         return {
-            "message": "If your email is registered, an OTP has been sent for password reset."
+            "message": "This email does not e."
         }
 
     otp = DEFAULT_OTP if DISABLE_EMAILS else "".join(random.choices(string.digits, k=6))
@@ -579,12 +588,6 @@ def reset_password(
 
     return {"message": "Password reset successfully. You can now log in."}
 
-
-
-
-# ... (Part of the create-password endpoint for reference)
-
-
 # ---------------- User Profile ----------------
 @app.get("/users/me", tags=["Users"])
 def get_user_profile(current_user: dict = Depends(get_current_user)):
@@ -655,8 +658,6 @@ def get_all_users(current_user: dict = Depends(get_current_user)):
         "users": users
     }
 
-
-
 # ---------------- CATEGORY ENDPOINTS ----------------
 @app.post("/categories/bulk", tags=["Categories"])
 def create_multiple_categories(data: BulkCategory, user=Depends(get_current_user)):
@@ -668,7 +669,7 @@ def create_multiple_categories(data: BulkCategory, user=Depends(get_current_user
 
     inserted = []
     for name in data.categories:
-        name_lower = name.lower().strip()
+        name_lower = name.strip()
         if categories_collection.find_one({"name": name_lower}):
             continue
 
@@ -700,6 +701,10 @@ def create_multiple_categories(data: BulkCategory, user=Depends(get_current_user
 
 @app.get("/categories", tags=["Categories"])
 def get_all_categories(user=Depends(get_current_user)):
+    """
+    Retrieve all categories.
+    Every user can access this route.
+    """
 
     cats = list(categories_collection.find({}, {"_id": 0}))
 
@@ -744,10 +749,7 @@ def delete_category(category_id: str, user=Depends(get_current_user)):
         "deleted_products": deleted_products,
     }
 
-
 # ---------------- PRODUCT ENDPOINTS ----------------
-
-
 @app.post("/products/bulk", tags=["Products"])
 def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user)):
     """
@@ -755,9 +757,10 @@ def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user))
     - Checks if category exists
     - Skips duplicates (same name under the same category)
     - Generates product_id, created_by, created_at automatically
+    - Only admin and store_manager can perform this action
     """
 
-    if user["role"] not in ["admin", "store_manager"]:
+    if user["role"] not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to add products")
 
     # Check if category exists
@@ -769,7 +772,7 @@ def add_multiple_products(data: BulkProductItem, user=Depends(get_current_user))
     skipped_products = []
 
     for item in data.products:
-        product_name = item.name.lower().strip()
+        product_name = item.name.strip()
 
         # check if product already exists in same category
         existing = products_collection.find_one(
@@ -814,6 +817,7 @@ def get_all_products(user=Depends(get_current_user)):
     """
     Retrieves all products, ensuring datetime objects are correctly serialized
     to prevent Pydantic errors which can cause fields (like product_id) to disappear.
+    - Every user can access this route.
     """
 
     # 1. Fetch data, excluding the MongoDB internal _id field
@@ -838,11 +842,11 @@ def update_product(
 ):
     """
     Update product details (name / price / quantity).
-    Only admin and store_manager are allowed.
+    Only admin and store manager are allowed.
     """
 
     # 1) auth check
-    if not user or user.get("role") not in ["admin", "store_manager"]:
+    if not user or user.get("role") not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to update products")
 
     # 2) check product exists
@@ -853,7 +857,7 @@ def update_product(
     # 3) build update dict from provided fields
     update_fields = {}
     if update.name is not None:
-        update_fields["name"] = update.name.lower().strip()
+        update_fields["name"] = update.name.strip()
     if update.price is not None:
         try:
             update_fields["price"] = float(update.price)
@@ -897,7 +901,7 @@ def update_product(
 def delete_product(product_id: str, user=Depends(get_current_user)):
     """
     Delete a product by its product_id.
-    - Only admin and store_manager can perform this action.
+    - Only admin and store manager can perform this action.
     """
 
     # Authorization check
@@ -972,7 +976,7 @@ def get_all_suppliers(user=Depends(get_current_user)):
     """
 
     # Authorization check
-    if user["role"] not in ["admin", "store_manager"]:
+    if user["role"] not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to view suppliers")
 
     # Get all suppliers
@@ -998,7 +1002,7 @@ def get_supplier_by_id(supplier_id: str, user=Depends(get_current_user)):
     """
 
     # Authorization check
-    if user["role"] not in ["admin", "store_manager"]:
+    if user["role"] not in ["admin", "store manager"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to view supplier info"
         )
@@ -1053,9 +1057,9 @@ def delete_supplier(supplier_id: str, user=Depends(get_current_user)):
 def create_purchase(item: PurchaseItem, user=Depends(get_current_user)):
     """
     Endpoint for admin to make a purchase.
-    Only 'admin' can perform this action.
+    Only 'admin' and 'store manager' can perform this action.
     """
-    if user["role"] != "admin":
+    if user["role"] not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Only admin can make purchases")
 
     # Check if product and supplier exist
@@ -1102,7 +1106,7 @@ def view_pending_purchases(current_user=Depends(get_current_user)):
     """
     Admin or Store Manager can view all pending purchases.
     """
-    if current_user["role"] not in ["admin", "store_manager"]:
+    if current_user["role"] not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to view purchases")
 
     # Fetch, excluding _id
@@ -1122,9 +1126,9 @@ def view_pending_purchases(current_user=Depends(get_current_user)):
 def approve_purchase(purchase_id: str, current_user=Depends(get_current_user)):
     """
     Approves a pending purchase, updates stock quantity, and sends an email notification.
-    Roles allowed: admin, store_manager.
+    Roles allowed: admin, store manager.
     """
-    if current_user["role"] not in ["admin", "store_manager"]:
+    if current_user["role"] not in ["admin", "store manager"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to approve purchases"
         )
@@ -1233,9 +1237,9 @@ def reject_purchase(
 ):
     """
     Explicitly rejects a pending purchase order by ID.
-    Roles allowed: admin, store_manager.
+    Roles allowed: admin, store manager.
     """
-    if current_user["role"] not in ["admin", "store_manager"]:
+    if current_user["role"] not in ["admin", "store manager"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to reject purchases"
         )
@@ -1314,11 +1318,11 @@ Inventory System
 def sell_product(sale: SellProduct, user=Depends(get_current_user)):
     """
     Sell a product and reduce its quantity in stock.
-    Roles allowed: admin, store_manager, sales_staff.
+    Roles allowed: admin, store manager, sale staff.
     Sends threshold email alert if quantity is below limit.
     """
     # Role check
-    if user["role"] not in ["admin", "store_manager", "sales_staff"]:
+    if user["role"] not in ["admin", "store manager", "sales staff"]:
         raise HTTPException(status_code=403, detail="Not authorized to sell products")
 
     # Find product
@@ -1424,11 +1428,11 @@ def sell_product(sale: SellProduct, user=Depends(get_current_user)):
 def get_all_sales(current_user=Depends(get_current_user)):
     """
     Retrieves all sales records.
-    Roles allowed: admin, store_manager.
+    Roles allowed: admin, store manager.
     """
 
     # 1. Authorization check
-    if current_user["role"] not in ["admin", "store_manager"]:
+    if current_user["role"] not in ["admin", "store manager"]:
         raise HTTPException(
             status_code=403, detail="Not authorized to view sales records"
         )
@@ -1452,8 +1456,11 @@ def get_all_sales(current_user=Depends(get_current_user)):
 
 @app.get("/products/category/{category_id}", tags=["Products"])
 def get_products_by_category(category_id: str, user=Depends(get_current_user)):
-    """Fetch all products belonging to a specific category."""
-    if user["role"] not in ["admin", "store_manager", "sales_staff"]:
+    """
+    Fetch all products belonging to a specific category.
+    - Everbody 
+    """
+    if user["role"] not in ["admin", "store manager", "sales staff"]:
         raise HTTPException(status_code=403, detail="Not authorized to view products")
 
     products = list(products_collection.find({"category_id": category_id}, {"_id": 0}))
@@ -1469,8 +1476,10 @@ def get_products_by_category(category_id: str, user=Depends(get_current_user)):
 
 @app.get("/purchases", tags=["Purchases"])
 def get_all_purchases(user=Depends(get_current_user)):
-    """Fetch all purchase records (approved, pending, rejected)."""
-    if user["role"] not in ["admin", "store_manager"]:
+    """Fetch all purchase records (approved, pending, rejected).
+    - Admin and store manager
+    """
+    if user["role"] not in ["admin", "store manager"]:
         raise HTTPException(status_code=403, detail="Not authorized to view purchases")
 
     purchases = list(purchases_collection.find({}, {"_id": 0}))
@@ -1521,8 +1530,10 @@ def update_supplier(
 
 @app.get("/sales/product/{product_id}", tags=["Sales"])
 def get_sales_by_product(product_id: str, user=Depends(get_current_user)):
-    """Retrieve all sales for a specific product."""
-    if user["role"] not in ["admin", "store_manager"]:
+    """Retrieve all sales for a specific product.
+    - Admin, store manager, sales staff
+    """
+    if user["role"] not in ["admin", "store manager", "sales staff"]:
         raise HTTPException(status_code=403, detail="Not authorized to view sales")
 
     sales = list(sales_collection.find({"product_id": product_id}, {"_id": 0}))
@@ -1534,8 +1545,10 @@ def get_sales_by_product(product_id: str, user=Depends(get_current_user)):
 
 @app.get("/dashboard/stats", tags=["Dashboard"])
 def dashboard_stats(user=Depends(get_current_user)):
-    """Get overall system statistics."""
-    if user["role"] not in ["admin", "store_manager"]:
+    """Get overall system statistics.
+    - Admin only
+    """
+    if user["role"] not in ["admin"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     total_products = products_collection.count_documents({})
@@ -1551,4 +1564,96 @@ def dashboard_stats(user=Depends(get_current_user)):
         "total_purchases": total_purchases,
         "low_stock": low_stock_count,
     }
+
+@app.put("/users/update-profile", tags=["Users"])
+def update_profile(
+    data: UpdateUserProfile, current_user: dict = Depends(get_current_user)
+):
+    """
+    Allows the logged-in user to update their profile information.
+    """
+    # Define which fields can be updated
+    allowed_fields = [
+        "first_name", "last_name", "phone_number",
+        "address", "state", "country"
+    ]
+
+    # Build dynamic update dictionary
+    update_data = {field: getattr(data, field) for field in allowed_fields if getattr(data, field) is not None}
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    update_data["updated_at"] = datetime.utcnow()
+
+    users_collection.update_one(
+        {"email": current_user["email"]},
+        {"$set": update_data}
+    )
+
+    return {"message": "Profile updated successfully"}
+
+@app.put("/admin/update-role", tags=["Admin"])
+def update_user_role(
+    data: UpdateUserRole,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Allows an admin to update a user's role using their user_id.
+    """
+    # Ensure the current user is an admin
+    if current_user["role"].lower() != "admin":
+        raise HTTPException(status_code=403, detail="Access denied. Admins only.")
+
+    # Find the user by user_id
+    user = users_collection.find_one({"user_id": data.user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Update role and timestamp
+    users_collection.update_one(
+        {"user_id": data.user_id},
+        {"$set": {
+            "role": data.role.lower(),
+            "updated_at": datetime.utcnow()
+        }}
+    )
+
+    return {"message": f"User role updated to '{data.role}' successfully."}
+
+@app.get("/purchases/rejected", tags=["Purchases"])
+def view_rejected_purchases(current_user=Depends(get_current_user)):
+    """
+    Admin or Store Manager can view all rejected purchases.
+    """
+    if current_user["role"] not in ["admin", "store manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view purchases")
+
+    purchases = list(purchases_collection.find({"status": "rejected"}, {"_id": 0}))
+
+    # Convert datetime fields for serialization
+    for p in purchases:
+        for key in ("created_at", "updated_at"):
+            if key in p and isinstance(p[key], datetime):
+                p[key] = p[key].isoformat()
+
+    return {"message": "Rejected purchases retrieved", "data": purchases}
+
+@app.get("/purchases/approved", tags=["Purchases"])
+def view_approved_purchases(current_user=Depends(get_current_user)):
+    """
+    Admin or Store Manager can view all approved purchases.
+    """
+    if current_user["role"] not in ["admin", "store manager"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view purchases")
+
+    purchases = list(purchases_collection.find({"status": "approved"}, {"_id": 0}))
+
+    # Convert datetime fields for serialization
+    for p in purchases:
+        for key in ("created_at", "updated_at"):
+            if key in p and isinstance(p[key], datetime):
+                p[key] = p[key].isoformat()
+
+    return {"message": "Approved purchases retrieved", "data": purchases}
 
